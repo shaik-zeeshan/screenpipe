@@ -1,10 +1,10 @@
+use crate::browser_utils::get_browser_url;
 use crate::cli::{CliVadEngine, CliVadSensitivity};
 use crate::db_types::Speaker;
 use crate::{DatabaseManager, VideoCapture};
 use anyhow::Result;
 use dashmap::DashMap;
 use futures::future::join_all;
-use tracing::{debug, error, info, warn};
 use screenpipe_audio::vad_engine::VadSensitivity;
 use screenpipe_audio::{
     create_whisper_channel, record_and_transcribe, vad_engine::VadEngineEnum, AudioDevice,
@@ -22,6 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
+use tracing::{debug, error, info, warn};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn start_continuous_recording(
@@ -228,7 +229,8 @@ async fn record_video(
     while is_running.load(Ordering::SeqCst) {
         if let Some(frame) = video_capture.ocr_frame_queue.pop() {
             for window_result in &frame.window_ocr_results {
-                match db.insert_frame(&device_name, None).await {
+                let url = get_browser_url(&window_result.app_name);
+                match db.insert_frame(&device_name, None, url).await {
                     Ok(frame_id) => {
                         let text_json =
                             serde_json::to_string(&window_result.text_json).unwrap_or_default();

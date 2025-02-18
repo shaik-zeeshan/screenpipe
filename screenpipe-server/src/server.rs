@@ -21,6 +21,7 @@ use image::ImageFormat::{self};
 use screenpipe_events::{send_event, subscribe_to_all_events, Event as ScreenpipeEvent};
 
 use crate::{
+    browser_utils::get_browser_url,
     db_types::{ContentType, FrameData, SearchResult, Speaker, TagContentType},
     pipe_manager::PipeManager,
     video::{finish_ffmpeg_process, start_ffmpeg_process, write_frame_to_ffmpeg, MAX_FPS},
@@ -38,7 +39,7 @@ use screenpipe_audio::{
 };
 use tracing::{debug, error, info};
 
-use screenpipe_vision::monitor::{list_monitors, get_monitor_by_id};
+use screenpipe_vision::monitor::{get_monitor_by_id, list_monitors};
 use screenpipe_vision::OcrEngine;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
@@ -1106,7 +1107,11 @@ async fn add_frame_to_db(
     let db = &state.db;
 
     let frame_id = db
-        .insert_frame(device_name, Some(frame.timestamp.unwrap_or_else(Utc::now)))
+        .insert_frame(
+            device_name,
+            Some(frame.timestamp.unwrap_or_else(Utc::now)),
+            None,
+        )
         .await?;
 
     if let Some(ocr_results) = &frame.ocr_results {
@@ -2532,4 +2537,3 @@ pub struct RestartVisionDevicesResponse {
 //         restarted_devices,
 //     }))
 // }
-
