@@ -40,8 +40,15 @@ pub fn get_browser_url(app_name: &str) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 pub fn get_browser_url(app_name: &str) -> Option<String> {
-    use windows::Win32::UI::Accessibility::{IUIAutomation, IUIAutomationElement};
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    use std::path::Path;
+    use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
+    use windows::Win32::UI::Accessibility::{
+        IUIAutomation, TreeScope_Descendants, UIA_ControlTypePropertyId, UIA_EditControlTypeId,
+        UIA_NamePropertyId,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextW, GetWindowThreadProcessId,
+    };
 
     let is_browser = matches!(
         app_name.to_lowercase().as_str(),
@@ -52,74 +59,125 @@ pub fn get_browser_url(app_name: &str) -> Option<String> {
         return None;
     }
 
-    // Get the foreground window handle
-    let hwnd = unsafe { GetForegroundWindow() };
-
-    // Initialize UI Automation
-    let automation = IUIAutomation::create().ok()?;
-    let element = unsafe { automation.ElementFromHandle(hwnd).ok()? };
-
-    // Get the address bar element (varies by browser)
-    let address_bar = element
-        .FindFirst(
-            TreeScope::Descendants,
-            automation.CreatePropertyCondition(UIA_ControlTypePropertyId, UIA_EditControlTypeId)?,
+    unsafe {
+        let automation = windows::Win32::UI::Accessibility::CoCreateInstance::<_, IUIAutomation>(
+            &windows::Win32::UI::Accessibility::CUIAutomation::default(),
+            None,
+            windows::Win32::System::Com::CLSCTX_INPROC_SERVER,
         )
         .ok()?;
 
-    // Get the URL from the address bar
-    let url_value = address_bar
-        .GetCurrentPropertyValue(UIA_ValuePatternPropertyId)
-        .ok()?;
-    url_value.GetString().ok()
+        // Store target window handle
+        let mut target_hwnd = None;
+
+        EnumWindows(
+            Some(|hwnd, lparam| -> i32 {
+                let mut process_id = 0;
+                GetWindowThreadProcessId(hwnd, Some(&mut process_id));
+
+                // Get process name
+                let process_handle =
+                    OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id);
+
+                let mut buffer = [0u16; 260];
+                if GetProcessImageFileNameW(process_handle, &mut buffer) > 0 {
+                    let process_name = String::from_utf16_lossy(&buffer)
+                        .trim_matches(char::from(0))
+                        .to_lowercase();
+
+                    if Path::new(&process_name)
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .map(|s| s.contains(&app_name.to_lowercase()))
+                        .unwrap_or(false)
+                    {
+                        target_hwnd = Some(hwnd);
+                        return 0; // Stop enumeration
+                    }
+                }
+
+                1 // Continue enumeration
+            }),
+            None,
+        );
+
+        let hwnd = target_hwnd?;
+        let element = automation.ElementFromHandle(hwnd).ok()?;
+
+        // Find address bar
+        let condition = automation
+            .CreatePropertyCondition(UIA_ControlTypePropertyId, UIA_EditControlTypeId.into())
+            .ok()?;
+
+        let address_bar = element.FindFirst(TreeScope_Descendants, &condition).ok()?;
+
+        let pattern = address_bar
+            .GetCurrentPattern(windows::Win32::UI::Accessibility::UIA_ValuePatternPropertyId)
+            .ok()?;
+
+        let value_pattern: windows::Win32::UI::Accessibility::IUIAutomationValuePattern =
+            pattern.cast().ok()?;
+
+        let url = value_pattern.CurrentValue().ok()?;
+        Some(url.to_string())
+    }
 }
 
 #[cfg(target_os = "linux")]
 pub fn get_browser_url(app_name: &str) -> Option<String> {
+    use gio::prelude::*;
+    use gio::{BusType, DBusConnection};
+
     let is_browser = matches!(
         app_name.to_lowercase().as_str(),
-        "chromium" | "firefox" | "google-chrome" | "brave-browser"
+        "firefox" | "chromium" | "google-chrome" | "brave-browser"
     );
 
     if !is_browser {
         return None;
     }
 
-    // Using xdotool to get active window info and then dbus to get URL
-    let window_id = Command::new("xdotool")
-        .arg("getactivewindow")
-        .output()
-        .ok()?;
+    let connection =
+        DBusConnection::new_for_bus_sync(BusType::Session, gio::NONE_CANCELLABLE).ok()?;
 
-    if !window_id.status.success() {
-        return None;
-    }
+    match app_name.to_lowercase().as_str() {
+        "firefox" => {
+            let msg = gio::DBusMessage::new_method_call(
+                Some("org.mozilla.firefox"),
+                "/org/mozilla/firefox",
+                "org.mozilla.firefox",
+                "GetCurrentURL",
+            );
 
-    let browser_name = match app_name.to_lowercase().as_str() {
-        "firefox" => "org.mozilla.firefox",
-        "chromium" | "google-chrome" => "org.chromium.Chromium",
-        "brave-browser" => "com.brave.Browser",
-        _ => return None,
-    };
+            let reply = connection
+                .send_message_with_reply_sync(&msg, gio::NONE_CANCELLABLE)
+                .ok()?;
 
-    // Using dbus-send to get URL from browser
-    let output = Command::new("dbus-send")
-        .args(&[
-            "--session",
-            "--dest=".to_owned() + browser_name,
-            "--type=method_call",
-            "--print-reply",
-            "/org/mozilla/firefox/Window",
-            "org.mozilla.firefox.Window.GetURL",
-        ])
-        .output()
-        .ok()?;
+            let variant = reply.body().get::<String>().ok()?;
+            Some(variant)
+        }
+        "chromium" | "google-chrome" | "brave-browser" => {
+            let browser_name = match app_name.to_lowercase().as_str() {
+                "chromium" => "org.chromium",
+                "google-chrome" => "com.google.Chrome",
+                "brave-browser" => "com.brave.Browser",
+                _ => return None,
+            };
 
-    if output.status.success() {
-        String::from_utf8(output.stdout)
-            .ok()
-            .and_then(|s| s.lines().last().map(String::from))
-    } else {
-        None
+            let msg = gio::DBusMessage::new_method_call(
+                Some(browser_name),
+                "/org/chromium/Browser",
+                "org.chromium.Browser",
+                "GetCurrentTabURL",
+            );
+
+            let reply = connection
+                .send_message_with_reply_sync(&msg, gio::NONE_CANCELLABLE)
+                .ok()?;
+
+            let variant = reply.body().get::<String>().ok()?;
+            Some(variant)
+        }
+        _ => None,
     }
 }
