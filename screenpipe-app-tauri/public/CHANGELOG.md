@@ -1,14 +1,13 @@
-Based on the provided commits, here is the changelog for the new Screenpipe update:
+Based on your provided commits, here is the changelog for the new Screenpipe update:
 
 ### **New Features:**
-- **Added thinking component for reasoning models:** Introduced a thinking component in both the rewind pipe and search pipe, enhancing model reasoning capabilities.
-- **Improved onboarding experience:** Enhanced the onboarding process by streaming screenshots in the UI for better user guidance.
+- **Updated SDK:** Enhanced functionality and compatibility with the latest SDK updates.
 
 ### **Improvements:**
-- **Optimized plugin update check:** Improved the efficiency of the plugin update check process.
-
+- **Fixed small UX issue in Obsidian:** Improved user experience in the Obsidian interface.
+ 
 ### **Fixes:**
-- **Fixed duplicate bouncing icon:** Resolved the issue with the duplicate bouncing icon to improve visual feedback.
+- **Fixed issue with browser_url filter in search API:** Resolved a filtering issue to ensure accurate search results.
 
-#### **Full Changelog:** [a13bf..8fa47](https://github.com/mediar-ai/screenpipe/compare/a13bf..8fa47)
+#### **Full Changelog:** [36bfa..b371c](https://github.com/mediar-ai/screenpipe/compare/36bfa..b371c)
 
