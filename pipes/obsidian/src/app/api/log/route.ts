@@ -9,6 +9,7 @@ import * as path from "path";
 import { extractLinkedContent } from "@/lib/actions/obsidian";
 import { settingsStore } from "@/lib/store/settings-store";
 import { OpenAI } from "openai";
+import { zodResponseFormat } from "openai/helpers/zod";
 
 const workLog = z.object({
   title: z.string(),
@@ -103,7 +104,7 @@ async function generateWorkLog(
   const response = await openai.chat.completions.create({
     model: aiPreset.model,
     messages: [{ role: "user", content: defaultPrompt }],
-    response_format: { type: "json_object" },
+    response_format: zodResponseFormat(workLog, "workLog"),
   });
 
   const jsonResponse = JSON.parse(response.choices[0].message.content || "{}");
